@@ -25,8 +25,31 @@
   // 세로 화면은 화면이 좁아 작은 글자를 25% 더 키운다
   function fz(n) { var k = (PORT && n <= 30 ? 1.25 : 1) * (BIG && n <= 30 ? 1.12 : 1); return Math.round(n * k); }
   var D = window.DATA;
-  var G = { correct: 0, total: 0, streak: 0, best: 0, tests: 0, audits: [], mode: 'normal', run: null, cases: 0, seed: 7, ending: null };
+  var G = { correct: 0, total: 0, streak: 0, best: 0, tests: 0, audits: [], mode: 'normal', run: null, cases: 0, seed: 7, ending: null, fair: 60, grow: 60, info: [] };
   var COUNTRIES = ['중국', '베트남', '인도네시아', '태국'];
+
+  // 같은 항목에는 같은 모양·색 표시를 붙인다(글을 다 읽지 않아도 짝을 찾도록)
+  var SYM = { '품명': ['sq', 0x3b82c4], '제품명': ['sq', 0x3b82c4], '규격': ['tri', 0x2e9e5b], feat: ['ring', 0x0f8a8a], '원산지': ['dot', 0xf08a24],
+    '제조사': ['dia', 0x7b4fb0], '업체명': ['dia', 0x7b4fb0], '수량': ['star', 0xd94a3a], '인증 표시': ['plus', 0x1f6f43], '유효기간': ['bar', 0x9c6b35] };
+  function symbol(s, x, y, field) {
+    var m = SYM[field], g = s.add.graphics(), r = 15;
+    if (!m) return g;
+    g.fillStyle(m[1], 1); g.lineStyle(5, m[1], 1);
+    if (m[0] === 'sq') g.fillRect(x - r + 2, y - r + 2, 2 * r - 4, 2 * r - 4);
+    else if (m[0] === 'tri') g.fillTriangle(x, y - r, x - r, y + r - 2, x + r, y + r - 2);
+    else if (m[0] === 'dot') g.fillCircle(x, y, r);
+    else if (m[0] === 'ring') g.strokeCircle(x, y, r - 3);
+    else if (m[0] === 'dia') g.fillPoints([{ x: x, y: y - r }, { x: x + r, y: y }, { x: x, y: y + r }, { x: x - r, y: y }], true);
+    else if (m[0] === 'star') {
+      var pts = [];
+      for (var i = 0; i < 10; i++) { var a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; pts.push({ x: x + Math.cos(a) * rr, y: y + Math.sin(a) * rr }); }
+      g.fillPoints(pts, true);
+    } else if (m[0] === 'plus') { g.fillRect(x - 4, y - r, 8, 2 * r); g.fillRect(x - r, y - 4, 2 * r, 8); }
+    else { g.fillRect(x - r, y - 4, 2 * r, 8); g.fillRect(x - r, y - r, 7, 2 * r); g.fillRect(x + r - 7, y - r, 7, 2 * r); }
+    return g;
+  }
+  function verdict() { var V = D.verdicts, f = G.fair >= D.meters.start, g = G.grow >= D.meters.start; return f && g ? V.both : f ? V.fair : g ? V.grow : V.none; }
+  function signed(d) { return (d > 0 ? '+' : '−') + Math.abs(d); }
 
   // ---------- 무작위 사례 생성(시드를 주면 같은 판이 나온다) ----------
   function rng(seed) {
@@ -56,9 +79,9 @@
   var PLACE = { doc: '납품 확인서', plate: '명판', cert: '증명서', both: '납품 확인서·명판' };
   var PLATE_KEYS = ['제품명', '제조사', '원산지', '제조 연월', '인증 표시'], CERT_KEYS = ['업체명', '제품명', '유효기간'];
   function markText(kc, green) { return kc && green ? 'KC 인증 · 최소녹색기준 제품' : kc ? 'KC 인증' : green ? '최소녹색기준 제품' : '표시 없음'; }
-  function makeCase(r, row, faults, day) {
+  function makeCase(r, row, faults, day, forceG) {
     var it = { art: row[0], name: row[1], spec: row[2], alt: row[3], near: row[4], featL: row[5], featV: row[6], featAlt: row[7], unit: row[8], qty: row[9], maker: row[10], makerAlt: row[11], need: row[12] || '' };
-    var kc = it.need.indexOf('K') >= 0, gr = it.need.indexOf('G') >= 0;
+    var kc = it.need.indexOf('K') >= 0, gr = !!forceG || it.need.indexOf('G') >= 0;
     var con = { '품명': it.name, '규격': it.spec, feat: it.featV, '수량': it.qty + it.unit, '원산지': '대한민국', '제조사': it.maker };
     var doc = {}; for (var k in con) doc[k] = con[k];
     var plate = { '제품명': it.name, '제조사': it.maker, '원산지': '대한민국', '제조 연월': '2026. ' + (7 + Math.floor(r() * 4)) + '.', '인증 표시': kc || gr ? markText(kc, gr) : '해당 없음' };
@@ -91,17 +114,18 @@
       }
       list.push(o);
     });
-    return { it: it, con: con, doc: doc, plate: plate, cert: cert, cond: cond, no: no, faults: list };
+    return { it: it, con: con, doc: doc, plate: plate, cert: cert, cond: cond, no: no, faults: list, row: row };
   }
   // KC·최소녹색기준 이상은 그 조건이 있는 물품에만 낸다
-  function fits(row, pat) { var need = row[12] || ''; return pat.every(function (f) { return f === 'kc' ? need.indexOf('K') >= 0 : f === 'green' ? need.indexOf('G') >= 0 : true; }); }
+  function fits(row, pat, forceG) { var need = row[12] || ''; return pat.every(function (f) { return f === 'kc' ? need.indexOf('K') >= 0 : f === 'green' ? (forceG || need.indexOf('G') >= 0) : true; }); }
   // 판의 날 설정: 3분 체험은 하루(D.quick), 캠페인은 1~4일차(D.days)
   function dayOf(i) { return G.mode === 'quick' ? D.quick : D.days[i]; }
   function newRun(seed, mode) {
     var r = rng(seed);
     G.correct = 0; G.total = 0; G.streak = 0; G.best = 0; G.tests = 0; G.audits = []; G.mode = mode || 'normal'; G.seed = seed; G.ending = null;
-    var pool = shuffle(r, D.items.slice()), k = 0;
-    G.run = (G.mode === 'quick' ? [D.quick] : D.days).map(function (day) {
+    G.fair = D.meters.start; G.grow = D.meters.start; G.info = [];
+    var pool = shuffle(r, D.items.slice()), k = 0, NT = D.notice, PR = D.precision;
+    G.run = (G.mode === 'quick' ? [D.quick] : D.days).map(function (day, di) {
       var n = day.n;
       var rest = shuffle(r, day.pool.slice()).slice(0, n - (day.teach ? 1 : 0));
       if (!rest.some(function (p) { return p.length === 0; })) rest[rest.length - 1] = [];
@@ -115,11 +139,32 @@
       });
       shuffle(r, rest);
       var pats = day.teach ? [day.teach].concat(rest) : rest;
-      return pats.map(function (p) {
-        for (var j = k; j < pool.length + k && !fits(pool[j % pool.length], p); j++);
+      // 오후 공지가 있는 날: 공지 뒤 납품물은 모두 최소녹색기준 대상이고, 그중 하나는 표시가 빠져 있다
+      var evAt = G.mode === 'quick' ? NT.quick : (di === NT.day ? NT.at : -1);
+      if (evAt >= 0 && !pats.slice(evAt).some(function (p) { return p.indexOf('green') >= 0; })) {
+        for (var e = pats.length - 1; e >= evAt; e--) {
+          if (pats[e].length === 1 && (day.must || []).indexOf(pats[e][0]) < 0) { pats[e] = ['green']; break; }
+        }
+      }
+      var tests = G.mode === 'quick' ? PR.per.quick : PR.per.days[di];
+      var cases = pats.map(function (p, ci) {
+        var fg = evAt >= 0 && ci >= evAt;
+        for (var j = k; j < pool.length + k && !fits(pool[j % pool.length], p, fg); j++);
         var a = k % pool.length, b = j % pool.length, t = pool[a]; pool[a] = pool[b]; pool[b] = t;
-        return makeCase(r, pool[k++ % pool.length], p, day);
+        var c = makeCase(r, pool[k++ % pool.length], p, day, fg);
+        // 정밀 검사를 쓰는 날: 화면에 보여 주는 업체 이력별 확률 그대로 숨은 결함을 뽑는다
+        if (tests) {
+          c.risk = PR.risk[Math.floor(r() * PR.risk.length)];
+          c.hidden = r() * 100 < c.risk[1] ? PR.defects[Math.floor(r() * PR.defects.length)] : null;
+        }
+        return c;
       });
+      // 숨은 감사 항목: 그날 나온 이상 유형 가운데 하나(브리핑에서는 후보 두 개만 알려 준다)
+      var fam = shuffle(r, Object.keys(D.focus).filter(function (f) {
+        return cases.some(function (c) { return c.faults.some(function (x) { return D.focus[f].types.indexOf(x.type) >= 0; }); });
+      }));
+      G.info.push({ ev: evAt, tests: tests, focus: fam[0] || null, alt: fam[1] || null, swap: r() < 0.5 });
+      return cases;
     });
     G.cases = G.run.reduce(function (a, d) { return a + d.length; }, 0);
   }
@@ -341,8 +386,9 @@
     txt('나의 검사관 등급', 540, 385, 34, '#5f6875', 700);
     txt(rank, 540, 470, 104, '#d94a3a', 900);
     txt('정확한 검사 기록 ' + G.correct + ' / ' + G.cases + '건 · 감사 지적 ' + G.audits.length + '건', 540, 565, 36, '#26323f', 800);
-    if (G.ending) txt('5일차 결말 「' + G.ending + '」', 540, 618, 34, '#1f3a5f', 800);
-    else if (G.mode === 'quick') txt('3분 체험 · 하루 검사 결과', 540, 618, 34, '#1f3a5f', 800);
+    if (G.ending) txt('5일차 결말 「' + G.ending + '」', 540, 606, 32, '#1f3a5f', 800);
+    else if (G.mode === 'quick') txt('3분 체험 · 하루 검사 결과', 540, 606, 32, '#1f3a5f', 800);
+    txt('공정 ' + G.fair + ' · 기업 성장 ' + G.grow + ' · ' + verdict().split(' · ')[0], 540, 646, 30, '#24804a', 800, 980);
     box(70, 670, 940, 250, '#ffffff');
     txt(S.label, 540, 718, 30, '#5f6875', 700);
     txt(S.big, 540, 800, 86, '#1f3a5f', 900);
@@ -513,7 +559,7 @@
       // 처음 온 사람은 3분 체험부터(Enter). 5일 캠페인과 학습 모드는 바로 옆에 둔다.
       var y0 = P ? 1250 : 640;
       button(s, 'start', cx, y0, P ? 880 : 640, 124, '3분 체험 시작', C.red, C.redD, function () { begin('quick'); }, 54);
-      T(s, cx, y0 + (P ? 88 : 82), '처음이라면 여기부터 · 납품물 7건', 26, C.gray, 700).setOrigin(0.5);
+      T(s, cx, y0 + (P ? 88 : 82), '처음이라면 여기부터 · 납품물 12건', 26, C.gray, 700).setOrigin(0.5);
       var y1 = P ? 1470 : 800, dx = P ? 230 : 160, bw = P ? 440 : 310;
       button(s, 'camp', cx - dx, y1, bw, 96, '5일 캠페인', C.navy, 0x2c5282, function () { begin('normal'); }, 36);
       button(s, 'learn', cx + dx, y1, bw, 96, '학습 모드', 0x2c6e8f, 0x3a83a6, function () { begin('learn'); }, 36);
@@ -551,14 +597,14 @@
   function inspectLayout(n) {
     if (!PORT) return {
       con: [60, 148, 620, 690], doc: [1240, 148, 620, 690], rows: ROWS[n], rowW: 580,
-      itemX: 960, itemFrom: 1500, baseY: 505, chipY: 590, chipX: [825, 1095, 960], hintY: [745, 590],
+      itemX: 960, itemFrom: 1500, baseY: 505, chipY: 590, chipX: [825, 1095, 960], hintY: [772, 590],
       guide: [170, 942, 230, 1055], bub: [330, 872, 850, 160], btnX: [1395, 1735], btnY: 958, btnW: 330, keyY: 1050, score: [1565, 864],
       zoom: { x: 700, y: 148, w: 1160, h: 690, artX: 860, artY: 450, artW: 270, artH: 300, capY: 640, capW: 280, fx: 1010, fy: 250, fw: 820, fh: 470,
         rowX: 1420, rowW: 760, py0: 312, pdy: 88, prh: 80, cy0: 395, cdy: 104, crh: 88, btnY: 785, btnX: [1100, 1500, 1280], btnW: 380 },
       wrong: [960, 540, 495, 660], modalW: 1200, endW: 1300
     };
     return {
-      con: [30, 770, 500, 680], doc: [550, 770, 500, 680], rows: n === 5 ? { y0: 932, dy: 100, h: 90, vs: 34 } : { y0: 942, dy: 120, h: 106, vs: 36 }, rowW: 470,
+      con: [30, 770, 500, 680], doc: [550, 770, 500, 680], rows: n === 5 ? { y0: 932, dy: 100, h: 90, vs: 42 } : { y0: 942, dy: 120, h: 106, vs: 46 }, rowW: 470,
       itemX: 540, itemFrom: 900, baseY: 520, chipY: 588, chipX: [400, 680, 540], hintY: [695, 680],
       guide: [115, 1590, 200, 1700], bub: [235, 1478, 815, 200], btnX: [280, 800], btnY: 1830, btnW: 470, keyY: 0, score: [540, 1720],
       zoom: { x: 30, y: 190, w: 1020, h: 1260, artX: 540, artY: 410, artW: 300, artH: 230, capY: 535, capW: 900, fx: 70, fy: 590, fw: 940, fh: 590,
@@ -579,6 +625,7 @@
     init(d) {
       this.dayIdx = d.day || 0; this.startItem = d.item || 0; this.skipIntro = !!d.skipIntro; this.presetCorrect = d.dayCorrect || 0;
       this.presetTime = d.timeLeft; this.presetAudits = d.audits || [];
+      this.presetTests = d.tests; this.presetLog = d.log; this.presetEv = !!d.ev; this.presetM0 = d.m0;
     }
     create() {
       var s = this;
@@ -591,12 +638,16 @@
       // 장면 객체는 다시 쓰이므로 이전 판(다른 날·학습 모드)에서 만든 화면 요소 참조를 지운다
       s.condT = null; s.dali = null; s.daliTxt = null; s.itemBox = null; s.timeBar = null; s.modalKey = null;
       s.LY = inspectLayout(s.day.rows.length); s.L = s.LY.rows;
+      s.info = G.info[s.dayIdx]; s.testsLeft = s.presetTests === undefined ? s.info.tests : s.presetTests;
+      s.log = s.presetLog || []; s.evShown = s.presetEv; s.meter0 = s.presetM0 || [G.fair, G.grow]; s.testBtn = null;
       var LY = s.LY;
       background(s, 'bg_office', LY.baseY);
       hud(s, s.day.title, s.day.sub);
       s.buildTimer();
       s.buildPanels();
       s.buildCenter();
+      s.buildMeters();
+      s.buildTest();
       s.guide = mascot(s, 'narmi', LY.guide[0], LY.guide[1], LY.guide[2]);
       nameTag(s, LY.guide[0], LY.guide[3], '나르미 선배');
       s.bub = bubble(s, LY.bub[0], LY.bub[1], LY.bub[2], LY.bub[3]);
@@ -614,7 +665,7 @@
     // 화면 방향이 바뀌어 다시 그릴 때 이어 갈 상태
     resumeData() {
       var s = this;
-      return { day: s.dayIdx, item: Math.min(s.idx + (s.answered ? 1 : 0), s.cases.length), skipIntro: s.introDone, dayCorrect: s.dayCorrect, timeLeft: s.timeLeft, audits: s.audits };
+      return { day: s.dayIdx, item: Math.min(s.idx + (s.answered ? 1 : 0), s.cases.length), skipIntro: s.introDone, dayCorrect: s.dayCorrect, timeLeft: s.timeLeft, audits: s.audits, tests: s.testsLeft, log: s.log, ev: s.evShown, m0: s.meter0 };
     }
     rowY(i) { return this.L.y0 + i * this.L.dy; }
     onKey(k) {
@@ -624,6 +675,7 @@
       // 화면이 바뀌는 사이에 누른 키는 버리지 않고, 다음 납품물이 준비되면 바로 처리한다(도장 직후 0.4초 안의 키는 연타로 보고 버린다)
       if (s.locked) { if (!s.ended && s.time.now - s.lockAt > 400) s.pendingKey = k; return; }
       if (k === 'Q' && s.dali) { s.daliHint(); return; }
+      if (k === 'T') { s.runTest(); return; }
       if (k.length === 1 && '12345'.indexOf(k) >= 0) {
         var n = Number(k) - 1;
         if (n < s.day.rows.length) { if (s.zoom) s.closeZoom(); s.toggle('doc:' + s.day.rows[n]); }
@@ -685,15 +737,16 @@
       s.specRows = []; s.docRows = [];
       s.day.rows.forEach(function (field, i) {
         var y = s.rowY(i);
-        var sf = T(s, A[0] + 40, y - L.h / 2 + 8, '', 22, C.gray, 700);
-        var sv = T(s, A[0] + 40, y + 12, '', L.vs, C.ink, 800).setOrigin(0, 0.5);
+        symbol(s, A[0] + 50, y + 4, field);
+        var sf = T(s, A[0] + 84, y - L.h / 2 + (PORT ? 3 : 6), '', PORT ? 26 : 22, C.gray, 700);
+        var sv = T(s, A[0] + 84, y + (PORT ? 17 : 12), '', L.vs, C.ink, 800).setOrigin(0, 0.5);
         if (i < s.day.rows.length - 1) { var sl = s.add.graphics(); sl.lineStyle(2, 0xe3e8ee, 1); sl.lineBetween(A[0] + 30, y + L.dy / 2, A[0] + A[2] - 30, y + L.dy / 2); }
         s.specRows.push({ f: sf, v: sv });
-        s.docRows.push(s.makeRow('row' + i, B[0] + B[2] / 2, y, s.LY.rowW, L.h, String(i + 1), function () { s.toggle('doc:' + field); }));
+        s.docRows.push(s.makeRow('row' + i, B[0] + B[2] / 2, y, s.LY.rowW, L.h, String(i + 1), function () { s.toggle('doc:' + field); }, null, field));
       });
     }
     // 표시할 수 있는 한 줄(확인서 칸, 명판·증명서 줄 공용)
-    makeRow(key, x, y, w, h, tag, fn, parent) {
+    makeRow(key, x, y, w, h, tag, fn, parent, field) {
       var s = this;
       var c = s.add.container(x, y).setDepth(3);
       var g = s.add.graphics();
@@ -704,12 +757,14 @@
         var st = { hover: 0xf0a830, marked: C.orange, found: C.red, hint: 0xf0a830, okrow: C.green }[state] || (parent ? 0xc4ccd6 : 0xd9c39d);
         rrect(g, -w / 2, -h / 2, w, h, 16, fill, parent ? 0.92 : 1, st, state === 'idle' ? 3 : 6);
       }
-      var f = T(s, -w / 2 + 24, -h / 2 + 8, '', 22, parent ? '#5f6875' : '#8a6d3b', 700);
-      var v = T(s, -w / 2 + 24, 12, '', h > 100 ? 38 : 34, C.ink, 800).setOrigin(0, 0.5);
+      // 휴대폰 세로 화면은 화면이 작아 서류 글자를 키운다
+      var sym = symbol(s, -w / 2 + 34, 4, field);
+      var f = T(s, -w / 2 + 66, -h / 2 + (PORT ? 3 : 6), '', PORT ? 26 : 22, parent ? '#5f6875' : '#8a6d3b', 700);
+      var v = T(s, -w / 2 + 66, PORT ? 17 : 12, '', PORT ? (h > 100 ? 46 : 42) : (h > 100 ? 38 : 34), C.ink, 800).setOrigin(0, 0.5);
       var chip = s.add.graphics();
       var n = T(s, w / 2 - 34, 0, tag, 24, '#8a7350', 800).setOrigin(0.5);
       var mk = T(s, w / 2 - 105, 0, '표시', 24, '#ffffff', 900).setOrigin(0.5).setVisible(false);
-      c.add([g, f, v, chip, n, mk]); c.setSize(w, h); c.setInteractive({ useHandCursor: true });
+      c.add([g, sym, f, v, chip, n, mk]); c.setSize(w, h); c.setInteractive({ useHandCursor: true });
       c.on('pointerover', function () { if (!s.locked && c.state === 'idle') draw('hover'); });
       c.on('pointerout', function () { if (c.state === 'idle') draw('idle'); });
       c.on('pointerdown', function () { if (!s.locked) fn(); });
@@ -780,8 +835,16 @@
       var lines = s.day.intro.slice();
       if (s.timed && s.day.timed) lines.push(s.day.timed);
       if (!s.timed) lines.push('학습 모드에서는 달이가 도와줘요. 막히면 달이를 눌러요' + (TOUCH ? '.' : '(Q).'));
-      var mw = s.LY.modalW, mx = (W - mw) / 2, cx = W / 2, top = PORT ? 250 : 210;
-      var body = wrapT(s, mx + 80, top + 190, lines.join('\n'), 34, C.ink, mw - 160, 700);
+      if (s.dayIdx === 0) lines.push('같은 모양 표시가 붙은 줄끼리 비교하면 쉬워요. 도장마다 ‘공정’(부정 업체를 막음)과 ‘기업 성장’(정직한 기업이 남음)이 바뀌어요.');
+      var inf = s.info;
+      if (inf.tests) lines.push('정밀 검사 ' + inf.tests + '회: 서류로는 안 보이는 숨은 결함을 찾아요. 업체마다 숨은 결함 확률이 보여요' + (s.timed ? '(한 번에 ' + D.precision.cost + '초).' : '.'));
+      if (inf.focus) {
+        var hs = [D.focus[inf.focus].hint].concat(inf.alt ? [D.focus[inf.alt].hint] : []);
+        if (inf.swap) hs.reverse();
+        lines.push('숨은 감사 항목: 오늘 감사관은 ' + (hs.length > 1 ? '‘' + hs[0] + '’나 ‘' + hs[1] + '’ 가운데 하나를' : '‘' + hs[0] + '’를') + ' 특히 본대요. 하루가 끝나면 알려 줘요.');
+      }
+      var mw = s.LY.modalW, mx = (W - mw) / 2, cx = W / 2, top = PORT ? 220 : 40;
+      var body = wrapT(s, mx + 80, top + 190, lines.join('\n'), PORT ? 34 : 29, C.ink, mw - 160, 700);
       var extra = [];
       var y = top + 190 + body.height + 20;
       if (s.day.note) { var nt = wrapT(s, mx + 80, y, s.day.note, 26, C.gray, mw - 160, 700); extra.push(nt); y += nt.height + 16; }
@@ -821,14 +884,14 @@
       fitW(s.docNo.setText('업체가 보낸 서류 · ' + s.case.no.replace('나라장터 계약 ', '')), pw);
       if (s.condT) fitW(s.condT.setText(s.case.cond), pw);
       s.day.rows.forEach(function (field, r) {
-        s.specRows[r].f.setText(s.rowLabel(field)); fitW(s.specRows[r].v.setText(s.case.con[field]), LY.con[2] - 80);
-        s.docRows[r].f.setText(s.rowLabel(field)); fitW(s.docRows[r].v.setText(s.case.doc[field]), LY.rowW - 190);
+        s.specRows[r].f.setText(s.rowLabel(field)); fitW(s.specRows[r].v.setText(s.case.con[field]), LY.con[2] - 124);
+        s.docRows[r].f.setText(s.rowLabel(field)); fitW(s.docRows[r].v.setText(s.case.doc[field]), LY.rowW - 232);
       });
       if (s.itemBox) s.itemBox.destroy();
       // 그림은 투명 여백 없이 잘려 있으므로, 아래 가장자리를 검수대 윗면(baseY)에 맞추고 그림자를 바로 밑에 깐다
       var BASE_Y = LY.baseY, HALF = 165;
       var box = s.add.container(LY.itemFrom, BASE_Y - HALF).setDepth(4);
-      var im = art(s, 0, HALF, s.case.it.art, 400, 330, s.case.it.name);
+      var im = art(s, 0, HALF, s.case.it.art, 400, 300, s.case.it.name);
       if (im.setOrigin) im.setOrigin(0.5, 1);
       var dw = im.displayWidth || 300, dh = im.displayHeight || 300;
       var sh = s.add.graphics();
@@ -858,8 +921,9 @@
       s.coach = (i === 0 && s.startItem === 0 && !!s.day.teach);
       announce((i + 1) + '번째 납품물 ' + s.case.it.name + '. ' + s.day.rows.map(function (field, r) {
         return (r + 1) + '번 ' + s.rowLabel(field) + ': 계약 ' + s.case.con[field] + ', 확인서 ' + dot(s.case.doc[field]);
-      }).join(' ') + (s.day.plate ? ' Z 명판' : '') + (s.day.cert ? ', X 증명서' : '') + (s.day.plate ? '. ' : ' ') + '숫자로 표시, Enter 이상 발견, Space 이상 없음.');
-      if (!s.coach) s.bub.say((i + 1) + '번째 납품물 · ' + s.case.it.name + '\n' + s.day.hint);
+      }).join(' ') + (s.testBtn ? ' 업체 이력 ' + s.case.risk[0] + ', 숨은 결함 확률 ' + s.case.risk[1] + '퍼센트, T 정밀 검사.' : '') + (s.day.plate ? ' Z 명판' : '') + (s.day.cert ? ', X 증명서' : '') + (s.day.plate ? '. ' : ' ') + '숫자로 표시, Enter 이상 발견, Space 이상 없음.');
+      if (s.testBtn) s.testLabel();
+      if (!s.coach) s.bub.say(s.case.repeat ? D.consequence.repeat + '\n' + s.case.it.name + ' · ' + s.case.it.maker : (i + 1) + '번째 납품물 · ' + s.case.it.name + '\n' + s.day.hint, s.case.repeat ? C.redS : undefined);
       else s.bub.say('첫 납품물은 함께 해 봐요!');
       s.refresh();
       s.coachStep();
@@ -926,8 +990,8 @@
       var keys = lines.map(function (l) { return kind + ':' + l[0]; });
       announce((kind === 'plate' ? '명판' : '직접생산 확인증명서') + '. ' + lines.map(function (l, i) { return 'ABCDE'[i] + ' ' + l[0] + ': ' + dot(l[1]); }).join(' ') + (kind === 'plate' ? ' ' + dot(s.case.cond) : '') + ' 글자 키로 표시, Esc 닫기.');
       var rows = lines.map(function (l, i) {
-        var r = s.makeRow((kind === 'plate' ? 'pl' : 'ce') + i, Z.rowX, y0 + i * dy, Z.rowW, rh, 'ABCDE'[i], function () { s.toggle(keys[i]); }, z);
-        r.f.setText(l[0]); fitW(r.v.setText(l[1]), Z.rowW - 190);
+        var r = s.makeRow((kind === 'plate' ? 'pl' : 'ce') + i, Z.rowX, y0 + i * dy, Z.rowW, rh, 'ABCDE'[i], function () { s.toggle(keys[i]); }, z, l[0]);
+        r.f.setText(l[0]); fitW(r.v.setText(l[1]), Z.rowW - 232);
         return r;
       });
       var btns = [];
@@ -993,6 +1057,8 @@
         s.bub.say(s.day.cert ? '확인서·명판·증명서가 모두 계약과 같아요. 이상 없음, 통과!' : s.day.plate ? '확인서와 명판이 모두 계약과 같아요. 이상 없음, 통과!' : '모든 칸이 계약과 같아요. 이상 없음, 통과!', C.greenS);
       }
       ['plate', 'cert'].forEach(function (k) { if (s.chips[k]) s.chips[k].badge(0); });
+      s.log.push({ c: s.case, ok: true });
+      if (F.length) s.meter('fair', D.meters.d.catch); else s.meter('grow', D.meters.d.pass);
       react(s, s.guide, 'happy');
       react(s, s.dali, 'happy');
       s.time.delayedCall(260, function () { Sfx.play('good'); });
@@ -1016,6 +1082,11 @@
       else if (!bad) head.push('계약과 다른 곳이 있었어요.');
       else if (missed.length) head.push('찾아야 할 곳 ' + F.length + '곳 중 ' + found.length + '곳을 찾았어요.');
       if (extra.length && F.length) head.push('계약과 같은 곳까지 표시했어요.');
+      // 통과시킨 부정 업체는 다시 오고, 반려당한 정직한 업체는 시장을 떠난다
+      var ent = { c: s.case, ok: false, bad: bad };
+      s.log.push(ent);
+      if (F.length && !bad) { s.meter('fair', D.meters.d.miss); ent.rep = s.repeat(); if (ent.rep) head.push((G.mode === 'quick' ? D.consequence.repeatLater : D.consequence.repeatNext).replace('{m}', ent.rep)); }
+      if (!F.length) s.meter('grow', D.meters.d.reject);
       var body = head.join('\n');
       F.forEach(function (f) { body += '\n\n' + f.where + ' · ' + f.label + '\n계약 ' + f.a + '\n→ 실제 ' + f.b + '\n' + f.lesson; });
       // 다른 곳은 색과 글자 표식으로 함께 알려 준다
@@ -1066,7 +1137,8 @@
         if (s.idx >= s.cases.length || (s.timed && s.timeLeft <= 0)) { s.endDay(s.timed && s.timeLeft <= 0 && s.idx < s.cases.length); return; }
         var old = s.itemBox; s.itemBox = null;
         s.tweens.add({ targets: old, x: s.LY.itemX - (PORT ? 360 : 660), alpha: 0, duration: 260, onComplete: function () { old.destroy(); } });
-        s.loadItem(s.idx);
+        if (s.idx === s.info.ev && !s.evShown) s.showNotice(function () { s.loadItem(s.idx); });
+        else s.loadItem(s.idx);
       });
     }
     update(t, dt) {
@@ -1104,17 +1176,21 @@
         at = fitW(T(s, ax + 40, 0, '나르미 선배의 감사 지적 0건 · 깔끔한 검사였어요!', 28, C.greenS, 800), fcw - 80);
       }
       ah = at.height + 36;
-      au.add([ag, at]);
-      var ph = 200 + ah + 24 + fc.cardH + 170, top = Math.round((H - ph) / 2);
-      rrect(ag, ax, top + 196, fcw, ah, 20, s.audits.length ? 0xfff0ed : 0xeaf7ef, 1, s.audits.length ? 0xe8a598 : 0x9fd3b2, 3);
-      at.y = top + 196 + 18;
-      fc.y = top + 200 + ah + 24;
+      var cqt = wrapT(s, ax + 40, 0, s.dayConsequences(unchecked).join('\n'), 25, C.navyS, fcw - 80, 700), ch = cqt.height + 30;
+      au.add([ag, at, cqt]);
+      var ph = 200 + ch + 16 + ah + 24 + fc.cardH + 170, top = Math.max(10, Math.round((H - ph) / 2));
+      rrect(ag, ax, top + 196, fcw, ch, 20, 0xeef3fa, 1, 0xb7c6dc, 3);
+      cqt.y = top + 196 + 15;
+      var ay = top + 196 + ch + 16;
+      rrect(ag, ax, ay, fcw, ah, 20, s.audits.length ? 0xfff0ed : 0xeaf7ef, 1, s.audits.length ? 0xe8a598 : 0x9fd3b2, 3);
+      at.y = ay + 18;
+      fc.y = ay + ah + 24;
       var g = s.add.graphics(); rrect(g, mx, top, mw, ph, 40, 0xffffff, 1);
       var head = T(s, cx, top + 72, s.day.title.split(' · ')[0] + ' 검사 끝!', 60, C.navyS, 900).setOrigin(0.5);
       var line = '정확한 검사 기록 ' + s.dayCorrect + ' / ' + s.cases.length + '건' + (unchecked > 0 ? '  (시간 초과로 ' + unchecked + '건 미검사)' : '');
       var sc = fitW(T(s, cx, top + 150, line, 36, C.ink, 800).setOrigin(0.5), mw - 80);
       layer.add([dm, g, head, sc, au, fc]);
-      announce(head.text + ' ' + line + '. ' + at.text.replace(/\n+/g, ' ') + ' 실제로는? ' + D.facts[s.day.fact].body + ' Enter를 누르면 ' + (G.mode === 'quick' ? '결과를 봐요.' : '다음 날로 가요.'));
+      announce(head.text + ' ' + line + '. ' + cqt.text.replace(/\n+/g, ' ') + ' ' + at.text.replace(/\n+/g, ' ') + ' 실제로는? ' + D.facts[s.day.fact].body + ' Enter를 누르면 ' + (G.mode === 'quick' ? '결과를 봐요.' : '다음 날로 가요.'));
       // 나르미는 화면에 있는 한 명만 앞으로 꺼내 반응한다
       s.lift(true);
       s.time.delayedCall(300, function () { react(s, s.guide, s.audits.length ? 'oops' : 'happy'); });
@@ -1128,6 +1204,146 @@
       s.modalKey = 'next';
       openFx(s, layer);
     }
+    // 두 계기판: 공정(부정 납품을 막음) · 기업 성장(정직한 중소기업이 남음). 수치와 막대를 함께 보여 준다.
+    buildMeters() {
+      var s = this;
+      s.meterUI = [['fair', C.navy], ['grow', C.green]].map(function (m, i) {
+        var w = PORT ? 280 : 236, x = PORT ? (i ? 760 : 40) : (i ? 974 : 710), y = PORT ? 236 : 140;
+        var bg = s.add.graphics().setDepth(6); rrect(bg, x - 10, y - 24, w + 20, 66, 16, 0xffffff, 0.94, 0xc9d3df, 2);
+        T(s, x, y - 6, D.meters[m[0]].name, 22, C.navyS, 800).setOrigin(0, 0.5).setDepth(7);
+        var val = T(s, x + w, y - 6, '', 22, C.ink, 900).setOrigin(1, 0.5).setDepth(7);
+        return { key: m[0], x: x, y: y + 22, w: w, color: m[1], val: val, bar: s.add.graphics().setDepth(7) };
+      });
+      s.drawMeters();
+    }
+    drawMeters() {
+      this.meterUI.forEach(function (u) {
+        var v = G[u.key];
+        u.bar.clear(); rrect(u.bar, u.x, u.y - 8, u.w, 16, 8, 0xe3e8ee, 1);
+        rrect(u.bar, u.x, u.y - 8, Math.max(16, u.w * v / 100), 16, 8, v < 40 ? C.red : u.color, 1);
+        u.val.setText(v + (v < 40 ? ' 낮음' : ''));
+      });
+    }
+    meter(key, d) {
+      var s = this;
+      G[key] = Phaser.Math.Clamp(G[key] + d, 0, 100);
+      s.drawMeters();
+      var u = s.meterUI.filter(function (m) { return m.key === key; })[0];
+      popText(s, u.x + u.w / 2, u.y + 34, D.meters[key].name + ' ' + signed(d), d > 0 ? C.greenS : C.redS, 30);
+    }
+    // 정밀 검사: 하루 횟수 제한, 한 번에 몇 초가 든다. 업체 이력별 숨은 결함 확률을 미리 보여 준다.
+    buildTest() {
+      var s = this;
+      if (!s.info.tests) return;
+      var w = PORT ? 300 : 430, h = PORT ? 132 : 72;
+      s.testBtn = button(s, 'ptest', PORT ? 900 : 960, PORT ? 410 : 668, w, h, '', 0x6b4fa0, 0x7d61b3, function () { s.runTest(); }, 22);
+      s.testBtn.label.setAlign('center').setLineSpacing(2);
+      s.testW = w - 24;
+    }
+    testLabel() {
+      var s = this, c = s.case;
+      var l1 = '정밀 검사' + (TOUCH ? '' : ' (T)') + ' · 남은 ' + s.testsLeft + '회';
+      var l2 = c.tested ? '결과: ' + (c.hidden || '기준 충족') : PORT ? c.risk[0] + '\n숨은 결함 ' + c.risk[1] + '%' : c.risk[0] + ' · 숨은 결함 ' + c.risk[1] + '%';
+      fitW(s.testBtn.label.setScale(1).setText(l1 + '\n' + l2), s.testW);
+    }
+    runTest() {
+      var s = this, c = s.case, P = D.precision;
+      if (s.locked || !s.testBtn) return;
+      if (c.tested) { s.bub.say('이미 정밀 검사를 했어요. 결과: ' + (c.hidden || '기준 충족')); return; }
+      if (s.testsLeft <= 0) { s.bub.say('오늘 정밀 검사를 다 썼어요. 서류와 명판으로 판단해요.', C.redS); return; }
+      s.testsLeft--; c.tested = true;
+      if (s.timed) { s.timeLeft = Math.max(1, s.timeLeft - P.cost); s.drawTimer(); popText(s, s.barX + 120, s.barY + 70, '−' + P.cost + '초', '#ffe08a', 30); }
+      if (s.zoom) s.closeZoom();
+      Sfx.play('test');
+      var msg;
+      if (c.hidden) {
+        c.faults.push({ type: 'hidden', accept: ['test:결함'], where: '정밀 검사', label: '시험 결과', a: '기준 충족', b: c.hidden, lesson: P.lesson, audit: '숨은 결함이 있는 물품을 통과시켜 다시 납품받음' });
+        s.marks['test:결함'] = true;
+        // 서류에 다른 곳이 더 있는지는 알려 주지 않는다(두 결과 모두 같은 안내)
+        msg = '정밀 검사 결과: ' + c.hidden + '! 시험 결과에 표시했어요. 서류·명판·증명서도 확인하고 도장을 골라요.';
+        s.bub.say(msg, C.redS);
+      } else {
+        msg = '정밀 검사 결과: 기준 충족, 숨은 결함은 없어요. 서류·명판·증명서도 확인하고 도장을 골라요.';
+        s.bub.say(msg, C.greenS);
+      }
+      announce(msg);
+      s.testLabel();
+      s.refresh();
+    }
+    // 통과시킨 부정 업체가 같은 물품으로 더 대담하게(다른 곳 두 군데) 다시 온다: 3분 체험은 오늘 두 건 뒤, 캠페인은 다음 날
+    repeat() {
+      var s = this, c = s.case, quick = G.mode === 'quick', di = quick ? s.dayIdx : s.dayIdx + 1;
+      if (di >= G.run.length) return null;
+      var list = G.run[di], day = dayOf(di), inf = G.info[di], PR = D.precision;
+      for (var j = quick ? s.idx + 2 : 1; j < list.length; j++) {
+        if (list[j].repeat) continue;
+        var r = rng(G.seed * 7 + di * 31 + j);
+        var rep = makeCase(r, c.row, [day.plate ? 'origin_plate' : 'spec', 'qty'], day, inf.ev >= 0 && j >= inf.ev);
+        rep.repeat = true;
+        if (inf.tests) { rep.risk = PR.again; rep.hidden = r() * 100 < PR.again[1] ? PR.defects[Math.floor(r() * PR.defects.length)] : null; }
+        list[j] = rep;
+        return c.it.maker;
+      }
+      return null;
+    }
+    // 오후 공지: 하루 중간에 실제 정책(2026년 업무계획의 최소녹색기준 확대)이 검사 기준을 바꾼다
+    showNotice(then) {
+      var s = this, N = D.notice;
+      s.evShown = true; s.timerOn = false;
+      var layer = s.add.container(0, 0).setDepth(80), dm = dim(s, 0.5);
+      var mw = s.LY.modalW, mx = (W - mw) / 2, cx = W / 2;
+      var body = wrapT(s, mx + 70, 0, N.body + '\n\n' + N.note + '\n' + srcShort(N.src), 32, C.ink, mw - 140, 700);
+      var hgt = 140 + body.height + 170, top = Math.round((H - hgt) / 2);
+      var g = s.add.graphics();
+      rrect(g, mx, top, mw, hgt, 36, 0xffffff, 1, C.orange, 6);
+      g.fillStyle(C.orange, 1); g.fillRoundedRect(mx, top, mw, 110, { tl: 36, tr: 36, bl: 0, br: 0 });
+      var t = fitW(T(s, cx, top + 55, N.title, 48, '#ffffff', 900).setOrigin(0.5), mw - 80);
+      body.y = top + 140;
+      layer.add([dm, g, t, body]);
+      s.lift(true);
+      react(s, s.guide, 'normal');
+      announce(N.title + '. ' + N.body + ' ' + N.note + ' Enter를 누르면 계속해요.');
+      Sfx.play('test');
+      var b = button(s, 'evt', cx, top + hgt - 80, 400, 100, '확인했어요', C.red, C.redD, function () {
+        s.modalKey = null; b.disabled = true;
+        closeFx(s, [layer, b], function () { s.lift(false); s.timerOn = s.timed && s.timeLeft > 0; then(); });
+      }, 40);
+      b.setDepth(81);
+      s.modalKey = 'evt';
+      openFx(s, layer);
+    }
+    // 하루 끝: 숨은 감사 항목 공개, 품질점검에서 드러난 숨은 결함, 다음 날로 이어지는 결과, 계기판 변화
+    dayConsequences(unchecked) {
+      var s = this, M = D.meters.d, CQ = D.consequence, out = [], quick = G.mode === 'quick', log = s.log;
+      function add(k, d) { G[k] = Phaser.Math.Clamp(G[k] + d, 0, 100); }
+      var caught = log.filter(function (e) { return e.ok && e.c.faults.length; }).length;
+      if (caught) out.push(CQ.caught.replace('{n}', caught));
+      var slips = log.filter(function (e) { return e.ok && !e.c.faults.length && e.c.hidden && !e.c.tested; }).length;
+      if (slips) { add('fair', M.slip * slips); out.push(D.precision.slip.replace('{n}', slips) + ' 공정 ' + signed(M.slip * slips)); }
+      if (s.info.focus) {
+        var FO = D.focus[s.info.focus];
+        var hasF = function (c) { return c.faults.some(function (x) { return FO.types.indexOf(x.type) >= 0; }); };
+        var rel = log.filter(function (e) { return hasF(e.c); }), hit = rel.filter(function (e) { return e.ok; }).length;
+        var tot = rel.length + (unchecked ? s.cases.slice(s.idx).filter(hasF).length : 0);
+        if (tot) { var dd = hit === tot ? M.focusHit : M.focusMiss; add('fair', dd); out.push('숨은 감사 항목은 ‘' + FO.name + '’였어요 · ' + tot + '건 중 ' + hit + '건 적발 → 공정 ' + signed(dd)); }
+      }
+      log.forEach(function (e) { if (e.rep && !quick) out.push(CQ.repeatNext.replace('{m}', e.rep)); });
+      var rejects = log.filter(function (e) { return !e.ok && !e.c.faults.length; }).length;
+      if (rejects) {
+        var nd = s.dayIdx + 1, gone = 0;
+        if (!quick && nd < G.run.length) {
+          var nx = G.run[nd];
+          for (var q = 0; q < rejects; q++) {
+            for (var j = nx.length - 1; j >= 1; j--) {
+              if (!nx[j].faults.length && !nx[j].repeat) { nx.splice(j, 1); G.cases--; gone++; if (j < G.info[nd].ev) G.info[nd].ev--; break; }
+            }
+          }
+        }
+        out.push(gone ? CQ.leave.split('{n}').join(gone) : CQ.leaveQuick);
+      }
+      out.push('공정 ' + s.meter0[0] + ' → ' + G.fair + ' · 기업 성장 ' + s.meter0[1] + ' → ' + G.grow);
+      return out;
+    }
     // 자동 플레이(시연·테스트용): 지금 납품물의 정답 또는 오답 조작 순서
     solution(correct) {
       var s = this, F = s.case.faults, out = [], open = null;
@@ -1135,6 +1351,7 @@
       if (!F.length) return ['ok'];
       F.forEach(function (f) {
         var k = f.accept[0], kind = k.split(':')[0];
+        if (kind === 'test') return;
         if (kind === 'doc') {
           if (open) { out.push('zclose'); open = null; }
           out.push('row' + s.day.rows.indexOf(k.split(':')[1]));
@@ -1482,9 +1699,11 @@
       var rec = '정확한 검사 기록 ' + G.correct + ' / ' + G.cases + '건 · 최고 연속 ' + G.best + '회 · 감사 지적 ' + G.audits.length + '건';
       var end = quick ? '3분 체험 · 다음엔 5일 캠페인에서 혁신제품 시범구매까지!'
         : (G.ending ? '5일차 결말 「' + G.ending + '」 · ' : '') + '현장 테스트 ' + G.tests + '회' + (G.mode === 'learn' ? ' · 학습 모드' : '');
-      fitW(T(s, cx, P ? 400 : 258, rec, 34, C.ink, 800).setOrigin(0.5), W - 80);
-      fitW(T(s, cx, P ? 455 : 306, end, 30, G.ending && !G.endingOk ? '#9b2c1f' : C.navyS, 800).setOrigin(0.5), W - 80);
-      fitW(T(s, cx, P ? 535 : 384, S.head, 46, C.navyS, 900).setOrigin(0.5), W - 80);
+      var mv = '공정 ' + G.fair + ' · 기업 성장 ' + G.grow + ' → ' + verdict();
+      fitW(T(s, cx, P ? 400 : 248, rec, 34, C.ink, 800).setOrigin(0.5), W - 80);
+      fitW(T(s, cx, P ? 450 : 294, mv, 32, '#24804a', 900).setOrigin(0.5), W - 80);
+      fitW(T(s, cx, P ? 496 : 338, end, 28, G.ending && !G.endingOk ? '#9b2c1f' : C.navyS, 800).setOrigin(0.5), W - 80);
+      fitW(T(s, cx, P ? 552 : 390, S.head, 46, C.navyS, 900).setOrigin(0.5), W - 80);
       // 대표 수치 1개 + 보조 한 줄. 세로 화면은 통계 → QR → 버튼 순서로 쌓는다.
       var st = P ? [40, 590, 1000, 400] : [360, 428, 1200, 320];
       var g = s.add.graphics();
@@ -1528,7 +1747,7 @@
         else if (k === 'C' && quick) s.targets.camp.fn();
         else if (k === 'S') openInfo(s, 'sources');
       });
-      announce('검사 결과. 등급 ' + rank + '. ' + rec + '. ' + dot(end) + ' ' + S.label + ' ' + S.big + '. Enter 다시 하기, ' + (quick ? 'C 5일 캠페인, ' : '') + 'Esc 처음으로, P 결과 카드, S 출처.');
+      announce('검사 결과. 등급 ' + rank + '. ' + rec + '. ' + mv + '. ' + dot(end) + ' ' + S.label + ' ' + S.big + '. Enter 다시 하기, ' + (quick ? 'C 5일 캠페인, ' : '') + 'Esc 처음으로, P 결과 카드, S 출처.');
       Sfx.play('clear');
       if (ratio >= 0.8) confetti(s, 70);
     }
@@ -1664,6 +1883,9 @@
         var key = st.solve === 'pilot' ? 'Pilot' : 'Inspect';
         var sc = this.game.scene.getScene(key);
         if (!sc || !sc.sys.isActive()) return;
+        // 하루 중간 공지는 먼저 닫고, 납품이 줄어 하루가 먼저 끝났으면 남은 풀이를 건너뛴다
+        if (key === 'Inspect' && sc.modalKey === 'evt') { this.script.unshift({ click: 'evt', ms: 400 }, { wait: 300 }); return; }
+        if (key === 'Inspect' && sc.modalKey === 'next') { this.script.shift(); if (st.solve === 'wrong' && this.script[1] && this.script[1].click === 'reason') this.script.splice(0, 2); return; }
         if (key === 'Inspect' && (sc.locked || sc.modalKey)) return;
         if (key === 'Pilot' && (sc.busy || sc.modalKey || sc.phase !== 'match')) return;
         this.script.shift();
@@ -1723,7 +1945,7 @@
     var g = window.__game, act = g.scene.getScenes(true).map(function (x) { return x.scene.key; });
     var ins = g.scene.getScene('Inspect');
     return {
-      scenes: act, correct: G.correct, total: G.total, cases: G.cases, audits: G.audits.length, tests: G.tests, mode: G.mode, ending: G.ending,
+      scenes: act, correct: G.correct, total: G.total, cases: G.cases, audits: G.audits.length, tests: G.tests, mode: G.mode, ending: G.ending, fair: G.fair, grow: G.grow,
       day: ins && ins.sys.isActive() ? ins.dayIdx : null, idx: ins && ins.sys.isActive() ? ins.idx : null,
       locked: ins && ins.sys.isActive() ? ins.locked : null, modal: ins && ins.sys.isActive() ? ins.modalKey || null : null,
       marks: ins && ins.sys.isActive() ? ins.markCount() : null, zoom: ins && ins.zoom ? ins.zoom.kind : null,
