@@ -66,10 +66,10 @@ window.DATA = {
     none: '공정도 기업 성장도 낮아요 · 다시 도전!'
   },
   consequence: {
-    caught: '적발 {n}건: 실제라면 입찰참가자격 제한이나 직접생산 확인 취소(6개월~1년 다시 신청 못 함) 대상이에요.',
+    caught: '적발 {n}건: 실제 조치는 위반 내용과 조사 결과에 따라 달라요. 불공정 조달행위로 확인되면 입찰참가자격 제한, 직접생산 위반이면 직접생산 확인 취소까지 받을 수 있어요.',
     repeat: '지난번에 통과시킨 업체가 다시 왔어요. 이번엔 더 대담해요!',
-    repeatLater: '통과시킨 업체({m})가 오늘 다시 납품하러 와요.',
-    repeatNext: '통과시킨 업체({m})가 내일 다시 납품하러 와요.',
+    repeatLater: '지난번에 통과시킨 {m}{i} 오늘 다시 납품하러 와요.',
+    repeatNext: '지난번에 통과시킨 {m}{i} 내일 다시 납품하러 와요.',
     leave: '반려당한 정직한 업체 {n}곳이 내일 입찰을 포기했어요(내일 납품 {n}건 줄어듦, 게임 설정).',
     leaveQuick: '반려당한 정직한 업체가 다음 입찰을 망설여요(게임 설정).',
     src: ['pps0923', 'smpp']
@@ -177,7 +177,7 @@ window.DATA = {
   },
   sources: {
     pps0923: { short: '조달청 보도자료(2025. 9. 23.)', date: '기준일 2025. 9. 23.', name: '조달청 보도자료 「조달청, 불공정 조달행위…부당이득 환수 등 엄중 조치」', url: 'https://www.pps.go.kr/kor/bbs/view.do?key=00634&bbsSn=2509230005' },
-    smpp: { short: '중소기업제품 공공구매 종합정보망', date: '기준일 2026. 11. 15.(누리집 확인)', name: '중소기업제품 공공구매 종합정보망 「직접생산확인 제도」 안내', url: 'https://www.smpp.go.kr/cst/smppInf/SelectMpeI2.do' },
+    smpp: { short: '중소기업제품 공공구매 종합정보망', date: '기준일 2026. 11. 15.(누리집 확인)', name: '중소기업제품 공공구매 종합정보망 직접생산 확인 제도 안내', url: 'https://www.smpp.go.kr/cst/smppInf/SelectMpeI2.do' },
     law55: { short: '국가법령정보센터', date: '기준일 2026. 11. 15.(누리집 확인)', name: '국가법령정보센터 「국가를 당사자로 하는 계약에 관한 법률 시행령」 제55조(검사)', url: 'https://www.law.go.kr/LSW/lsLawLinkInfo.do?lsJoLnkSeq=900637064&chrClsCd=010202' },
     pps1211: { short: '조달청 보도자료(2025. 12. 11.)', date: '기준일 2025. 12. 11.', name: '조달청 보도자료 「조달청, 2026년 공공조달의 전략적 활용을 통해 기술선도성장·균형성장·공정성장 뒷받침한다」', url: 'https://pps.go.kr/kor/bbs/view.do?bbsSn=2512110028&key=00634' },
     brief1211: { short: '대한민국 정책브리핑(2025. 12. 11.)', date: '기준일 2025. 12. 11.', name: '대한민국 정책브리핑 「2026년 조달청 업무계획」(조달청장 브리핑)', url: 'https://www.korea.kr/briefing/policyBriefingView.do?newsId=156734688' },
@@ -185,7 +185,7 @@ window.DATA = {
     green: { short: '조달청 공공녹색구매 통합정보망', date: '기준일 2026. 11. 15.(누리집 확인)', name: '조달청 공공녹색구매 통합정보망 「최소녹색기준 제품 지정제도」', url: 'https://www.pps.go.kr/green/content.do?key=01133' },
     kc: { short: '국가기술표준원 제품안전정보센터', date: '기준일 2026. 11. 15.(누리집 확인)', name: '국가기술표준원 제품안전정보센터 「전기용품 안전인증제도」', url: 'https://www.safetykorea.kr/policy/targetsSafetyCert' },
     pps1218: { short: '조달청 보도자료(2025. 12. 18.)', date: '기준일 2025. 12. 18.', name: '조달청 보도자료 「조달청 “’26년 혁신제품 시범구매 기본계획” 발표, 선도경제 전환 지원」', url: 'https://www.pps.go.kr/kor/bbs/view.do?key=00634&bbsSn=2512180012' },
-    pps0626: { short: '조달청 보도자료(2026. 6. 26.)', date: '기준일 2026. 6. 26.', name: '조달청 보도자료 「지난해 공공조달 규모 238.5조원 역대 최고 기록」', url: 'https://www.pps.go.kr/kor/bbs/view.do?key=00634&bbsSn=2606260005' },
+    pps0626: { short: '조달청 보도자료(2026. 6. 26.)', date: '기준일 2026. 6. 26.', name: '조달청 보도자료: 2025년 공공조달 규모 역대 최고 기록', url: 'https://www.pps.go.kr/kor/bbs/view.do?key=00634&bbsSn=2606260005' },
     quality: { short: '조달청 조달품질원 누리집', date: '기준일 2026. 11. 15.(누리집 확인)', name: '조달청 조달품질원 「품질관리제도」', url: 'https://www.pps.go.kr/center/content.do?key=00289' },
     g2bstat: { short: '조달청 누리집 나라장터 통계(2025년)', date: '기준 연도 2025년', name: '조달청 누리집 「나라장터」 통계 · 조달기업 등록 수', url: 'https://www.pps.go.kr/kor/content.do?key=00167' }
   },

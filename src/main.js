@@ -180,6 +180,9 @@
   }
   // 숫자와 단위(839억 원, 2026. 9. 1.)가 줄바꿈으로 갈라지지 않게 붙인다
   function keepUnits(str) { return String(str).replace(/(\d[\d,.%]*(?:조|억|만|천)?) (?=\d|원|개|건|곳|회|초|일|년|대|본|명|상자|억|만)/g, '$1\u00a0'); }
+  // 마지막 한글 글자에 받침이 있는지: 조사(이/가, 이었어요/였어요)를 고른다
+  function batchim(word) { var m = String(word).match(/[가-힣](?=[^가-힣]*$)/); return !!m && (m[0].charCodeAt(0) - 0xac00) % 28 > 0; }
+  function repLine(tpl, m) { return tpl.replace('{m}', m).replace('{i}', batchim(m) ? '이' : '가'); }
   function wrapT(s, x, y, str, size, color, width, weight, align) {
     return T(s, x, y, keepUnits(str), size, color, weight || 600, { wordWrap: { width: width, useAdvancedWrap: true }, lineSpacing: Math.round(size * 0.35), align: align || 'left' });
   }
@@ -1085,7 +1088,7 @@
       // 통과시킨 부정 업체는 다시 오고, 반려당한 정직한 업체는 시장을 떠난다
       var ent = { c: s.case, ok: false, bad: bad };
       s.log.push(ent);
-      if (F.length && !bad) { s.meter('fair', D.meters.d.miss); ent.rep = s.repeat(); if (ent.rep) head.push((G.mode === 'quick' ? D.consequence.repeatLater : D.consequence.repeatNext).replace('{m}', ent.rep)); }
+      if (F.length && !bad) { s.meter('fair', D.meters.d.miss); ent.rep = s.repeat(); if (ent.rep) head.push(repLine(G.mode === 'quick' ? D.consequence.repeatLater : D.consequence.repeatNext, ent.rep)); }
       if (!F.length) s.meter('grow', D.meters.d.reject);
       var body = head.join('\n');
       F.forEach(function (f) { body += '\n\n' + f.where + ' · ' + f.label + '\n계약 ' + f.a + '\n→ 실제 ' + f.b + '\n' + f.lesson; });
@@ -1103,8 +1106,10 @@
       s.bub.say(F.length ? '앗, 다시 볼까요? 노란 표시와 가운데 설명을 확인해요.' : '앗, 이 납품물은 이상이 없었어요.', C.redS);
       var layer = s.add.container(0, 0).setDepth(70);
       var WR = s.LY.wrong, wx = WR[0] - WR[1] / 2;
-      var txt = wrapT(s, wx + 34, 0, body, 25, C.ink, WR[1] - 68, 600);
-      var hgt = Math.min(WR[3], 90 + txt.height + 130), top = Math.round(WR[2] - hgt / 2);
+      // 본문이 길면 글자를 줄여 [알겠어요] 버튼 위에 모두 들어가게 한다
+      var fs = 25, cap = Math.max(WR[3], H - 120), txt = wrapT(s, wx + 34, 0, body, fs, C.ink, WR[1] - 68, 600);
+      while (90 + txt.height + 130 > cap && fs > 20) { txt.destroy(); fs -= 1; txt = wrapT(s, wx + 34, 0, body, fs, C.ink, WR[1] - 68, 600); }
+      var hgt = 90 + txt.height + 130, top = Math.round(Phaser.Math.Clamp(WR[2] - hgt / 2, 20, Math.max(20, H - hgt - 20)));
       var g = s.add.graphics();
       rrect(g, wx + 6, top + 6, WR[1] - 12, hgt, 26, 0x000000, 0.2);
       rrect(g, wx, top, WR[1], hgt, 26, 0xffffff, 1, C.red, 6);
@@ -1191,8 +1196,8 @@
       var sc = fitW(T(s, cx, top + 150, line, 36, C.ink, 800).setOrigin(0.5), mw - 80);
       layer.add([dm, g, head, sc, au, fc]);
       announce(head.text + ' ' + line + '. ' + cqt.text.replace(/\n+/g, ' ') + ' ' + at.text.replace(/\n+/g, ' ') + ' 실제로는? ' + D.facts[s.day.fact].body + ' Enter를 누르면 ' + (G.mode === 'quick' ? '결과를 봐요.' : '다음 날로 가요.'));
-      // 나르미는 화면에 있는 한 명만 앞으로 꺼내 반응한다
-      s.lift(true);
+      // 나르미는 화면에 있는 한 명만 앞으로 꺼내 반응한다. 세로 화면에서는 카드가 폭을 다 써서 꺼내면 글을 가린다.
+      if (!PORT) s.lift(true);
       s.time.delayedCall(300, function () { react(s, s.guide, s.audits.length ? 'oops' : 'happy'); });
       var quick = G.mode === 'quick', last = quick || s.dayIdx === D.days.length - 1;
       var b = button(s, 'next', cx - 140, top + ph - 90, 420, 104, quick ? '결과 보기' : last ? '마지막 날로' : '다음 날로', C.red, C.redD, function () {
@@ -1325,9 +1330,9 @@
         var hasF = function (c) { return c.faults.some(function (x) { return FO.types.indexOf(x.type) >= 0; }); };
         var rel = log.filter(function (e) { return hasF(e.c); }), hit = rel.filter(function (e) { return e.ok; }).length;
         var tot = rel.length + (unchecked ? s.cases.slice(s.idx).filter(hasF).length : 0);
-        if (tot) { var dd = hit === tot ? M.focusHit : M.focusMiss; add('fair', dd); out.push('숨은 감사 항목은 ‘' + FO.name + '’였어요 · ' + tot + '건 중 ' + hit + '건 적발 → 공정 ' + signed(dd)); }
+        if (tot) { var dd = hit === tot ? M.focusHit : M.focusMiss; add('fair', dd); out.push('숨은 감사 항목은 ‘' + FO.hint + '’(' + FO.name + ')' + (batchim(FO.name) ? '이었어요' : '였어요') + ' · ' + tot + '건 중 ' + hit + '건 적발 → 공정 ' + signed(dd)); }
       }
-      log.forEach(function (e) { if (e.rep && !quick) out.push(CQ.repeatNext.replace('{m}', e.rep)); });
+      log.forEach(function (e) { if (e.rep && !quick) out.push(repLine(CQ.repeatNext, e.rep)); });
       var rejects = log.filter(function (e) { return !e.ok && !e.c.faults.length; }).length;
       if (rejects) {
         var nd = s.dayIdx + 1, gone = 0;
